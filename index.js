@@ -1,72 +1,71 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const app = express();
 const bodyParser = require('body-parser');
-const { lookup } = require('dns');
-const { promisify } = require('util');
-const shortid = require('shortid');
+const dns = require('dns');
+
+const app = express();
 
 // Basic Configuration
 const port = process.env.PORT || 3000;
 
 app.use(cors());
-
+app.use(bodyParser.urlencoded({ extended: true }));
 app.use('/public', express.static(`${process.cwd()}/public`));
 
-app.get('/', (req, res) => {
+// Array to store URL mappings
+const urlMappings = [];
+
+// Routes
+app.get('/', function(req, res) {
   res.sendFile(process.cwd() + '/views/index.html');
 });
 
-// Promisify dns.lookup to use it with async/await
-const lookupAsync = promisify(lookup);
-
-/// Middleware
-app.use(bodyParser.urlencoded({ extended: true }));
-app.use(bodyParser.json());
-
-// In-memory storage for URL mappings
-const urlDatabase = {};
-
-// Endpoint to create short URL
-app.post('/api/shorturl', async (req, res) => {
-  const { original_url } = req.body;
-
-  // Check if the URL is valid
-  try {
-    // Verify the submitted URL
-    const { hostname } = new URL(original_url);
-    await lookupAsync(hostname);
-
-    // Generate short URL
-    const short_url = shortid.generate();
-
-    // Store the URL mapping
-    urlDatabase[short_url] = original_url;
-
-    // Respond with JSON containing both URLs
-    res.json({ original_url, short_url });
-  } catch (error) {
-    console.error(error);
-    res.status(400).json({ error: 'invalid url' });
-  }
+app.get('/api/hello', function(req, res) {
+  res.json({ greeting: 'hello API' });
 });
 
-// Endpoint to redirect to original URL
-app.get('/api/shorturl/:short_url', (req, res) => {
-  const { short_url } = req.params;
+// URL shortening endpoint
+app.post('/api/shorturl', function(req, res) {
+  const { url } = req.body;
 
-  // Check if short URL exists in the database
-  if (urlDatabase.hasOwnProperty(short_url)) {
-    // Redirect to the original URL
-    res.redirect(urlDatabase[short_url]);
+  // Validate URL format
+  const urlRegex = /^(http|https):\/\/[^ "]+$/;
+  if (!urlRegex.test(url)) {
+    return res.json({ error: 'invalid url' });
+  }
+
+  // Validate URL using dns.lookup
+  const urlObject = new URL(url);
+  dns.lookup(urlObject.hostname, (err) => {
+    if (err) {
+      return res.json({ error: 'invalid url' });
+    } else {
+      // Generate short URL
+      const shortUrl = Math.floor(Math.random() * 100000).toString();
+      
+      // Store URL mapping in array
+      urlMappings.push({ original_url: url, short_url: shortUrl });
+
+      res.json({
+        original_url: url,
+        short_url: shortUrl
+      });
+    }
+  });
+});
+
+// Redirect to original URL
+app.get('/api/shorturl/:short_url', function(req, res) {
+  const shortUrl = req.params.short_url;
+  const urlMapping = urlMappings.find(mapping => mapping.short_url === shortUrl);
+  if (urlMapping) {
+    res.redirect(urlMapping.original_url);
   } else {
-    // Short URL not found
-    res.status(404).json({ error: 'short url not found' });
+    res.json({ error: 'short url not found' });
   }
 });
 
-
-app.listen(port, () => {
+app.listen(port, function() {
   console.log(`Listening on port ${port}`);
 });
